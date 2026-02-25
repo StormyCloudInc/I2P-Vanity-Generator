@@ -8,28 +8,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            ext: ""
-            cgo: 1
-          - os: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            ext: ""
-            cgo: 1
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            ext: ""
-            cgo: 1
-
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -39,32 +19,47 @@ jobs:
           go-version: '1.24'
 
       - name: Install Linux dependencies
-        if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
 
       - name: Build
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 1
         run: |
           LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}"
-          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" .
+          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-linux-amd64" .
         shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: i2p-vanitygen-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          name: i2p-vanitygen-linux-amd64
+          path: i2p-vanitygen-linux-amd64
 
   build-windows:
     runs-on: [self-hosted, Windows, X64]
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set version in Windows resources
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $parts = $tag -split '\.'
+          while ($parts.Count -lt 4) { $parts += "0" }
+          $ver = ($parts[0..3]) -join '.'
+          Write-Host "Setting Windows file version to $ver"
+          $json = Get-Content winres\winres.json -Raw
+          $json = $json -replace '"file_version": "0\.0\.0\.0"', "`"file_version`": `"$ver`""
+          $json = $json -replace '"product_version": "0\.0\.0\.0"', "`"product_version`": `"$ver`""
+          $json = $json -replace '"version": "0\.0\.0\.0"', "`"version`": `"$ver`""
+          $json | Set-Content winres\winres.json -NoNewline
+          Write-Host "Updated winres.json:"
+          Get-Content winres\winres.json
+        shell: powershell
 
       - name: Generate Windows resources
         run: |
@@ -92,8 +87,34 @@ jobs:
           name: i2p-vanitygen-windows-amd64
           path: i2p-vanitygen-windows-amd64.exe
 
+  sign-linux:
+    needs: build-linux
+    runs-on: [self-hosted, Windows, X64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: i2p-vanitygen-linux-amd64
+
+      - name: Sign Linux binary (detached PKCS#7)
+        env:
+          CERTUM_CERTIFICATE_SHA1: ${{ secrets.CERTUM_CERTIFICATE_SHA1 }}
+        run: powershell -ExecutionPolicy Bypass -File ".github/scripts/sign-detached.ps1" -FilePath "i2p-vanitygen-linux-amd64"
+        shell: cmd
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2p-vanitygen-linux-amd64-signed
+          path: |
+            i2p-vanitygen-linux-amd64
+            i2p-vanitygen-linux-amd64.p7s
+
   release:
-    needs: [build, build-windows]
+    needs: [build-windows, sign-linux]
     runs-on: ubuntu-latest
 
     steps:
