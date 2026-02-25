@@ -56,15 +56,59 @@ if (-not $SignTool) {
 
 Write-Host "Using signtool: $SignTool"
 
-# Sign the binary
-Write-Host "Signing..."
-$signOutput = & $SignTool sign /sha1 $CertificateSHA1 /tr "http://time.certum.pl" /td SHA256 /fd SHA256 /v $BinaryPath 2>&1
-$signExit = $LASTEXITCODE
+# List available certificates for diagnostics
+Write-Host ""
+Write-Host "Checking certificate stores..."
+$stores = @("CurrentUser\My", "LocalMachine\My")
+foreach ($storeName in $stores) {
+    $parts = $storeName -split '\\'
+    $location = $parts[0]
+    $name = $parts[1]
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($name, $location)
+    try {
+        $store.Open("ReadOnly")
+        $certs = $store.Certificates
+        Write-Host "  ${storeName}: $($certs.Count) certificate(s)"
+        foreach ($cert in $certs) {
+            Write-Host "    - $($cert.Thumbprint) | $($cert.Subject) | Issuer: $($cert.Issuer)"
+        }
+        $store.Close()
+    } catch {
+        Write-Host "  ${storeName}: Could not open store - $_"
+    }
+}
 
-Write-Host $signOutput
+# Also check smart card / CSP certificates
+Write-Host ""
+Write-Host "Checking for smart card certificates via certutil..."
+$certutilOutput = certutil -user -store My 2>&1
+Write-Host $certutilOutput
+
+# Wait and retry - SimplySign virtual smart card may need time to populate
+Write-Host ""
+Write-Host "Signing with retry (certificate may take time to appear)..."
+$signExit = 1
+$maxAttempts = 6
+for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    Write-Host ""
+    Write-Host "Attempt $attempt of $maxAttempts..."
+    $signOutput = & $SignTool sign /sha1 $CertificateSHA1 /tr "http://time.certum.pl" /td SHA256 /fd SHA256 /v $BinaryPath 2>&1
+    $signExit = $LASTEXITCODE
+    Write-Host $signOutput
+
+    if ($signExit -eq 0) {
+        Write-Host "Signing succeeded on attempt $attempt"
+        break
+    }
+
+    if ($attempt -lt $maxAttempts) {
+        Write-Host "Signing failed, waiting 10 seconds before retry..."
+        Start-Sleep -Seconds 10
+    }
+}
 
 if ($signExit -ne 0) {
-    Write-Host "ERROR: Signing failed (exit code $signExit)"
+    Write-Host "ERROR: Signing failed after $maxAttempts attempts (exit code $signExit)"
     exit 1
 }
 
