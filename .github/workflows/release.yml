@@ -23,7 +23,7 @@ jobs:
             goarch: amd64
             ext: ""
             cgo: 1
-          - os: macos-13
+          - os: macos-15-intel
             goos: darwin
             goarch: amd64
             ext: ""
@@ -47,7 +47,7 @@ jobs:
         if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev libgles2-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev pkg-config
+          sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
 
       - name: Build
         env:
