@@ -114,49 +114,165 @@ $proc = Start-Process -FilePath $ExePath -PassThru
 Write-Host "Process ID: $($proc.Id)"
 Start-Sleep -Seconds 5
 
-$wshell = New-Object -ComObject WScript.Shell
-
-# Focus the window
-$focused = $false
-for ($i = 0; $i -lt 15; $i++) {
-    $focused = $wshell.AppActivate($proc.Id) -or $wshell.AppActivate('SimplySign Desktop')
-    if ($focused) { break }
-    Start-Sleep -Milliseconds 500
-    Write-Host "  Focus attempt $($i + 1)..."
-}
-
-if (-not $focused) {
-    Write-Host "ERROR: Could not focus SimplySign Desktop window"
-    exit 1
-}
-
-Write-Host "Window focused"
-Start-Sleep -Milliseconds 400
-
 # Diagnostic: log username info (without revealing full value)
 Write-Host "Username length: $($UserId.Length), starts with: $($UserId.Substring(0, [Math]::Min(3, $UserId.Length)))..."
 
-# Re-generate TOTP right before sending to minimize expiry risk
+# Re-generate TOTP right before injection
 $otp = [Totp]::Now($Base32, $Digits, $Period, $Algorithm)
 $epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $remaining = $Period - ($epoch % $Period)
 Write-Host "Fresh TOTP ($Algorithm): $otp (valid for ${remaining}s)"
 
-# Inject credentials: username TAB otp ENTER
-# Use clipboard for username to avoid SendKeys issues with special chars like @
+# === Use UI Automation to inject credentials directly into fields ===
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Clipboard]::SetText($UserId)
-$wshell.SendKeys("^a")
-Start-Sleep -Milliseconds 100
-$wshell.SendKeys("^v")
-Start-Sleep -Milliseconds 300
-$wshell.SendKeys("{TAB}")
-Start-Sleep -Milliseconds 300
-$wshell.SendKeys($otp)
-Start-Sleep -Milliseconds 300
-$wshell.SendKeys("{ENTER}")
 
-Write-Host "Credentials sent, waiting for authentication..."
+Write-Host ""
+Write-Host "Finding SimplySign window via UI Automation..."
+
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+
+# Find the SimplySign window by process ID
+$pidCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
+
+$ssWindow = $null
+for ($i = 0; $i -lt 20; $i++) {
+    $ssWindow = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $pidCondition)
+    if ($ssWindow) { break }
+    Start-Sleep -Milliseconds 500
+    Write-Host "  Waiting for window... ($($i + 1))"
+}
+
+if (-not $ssWindow) {
+    Write-Host "ERROR: Could not find SimplySign window via UI Automation"
+    exit 1
+}
+
+Write-Host "Found window: $($ssWindow.Current.Name)"
+
+# Enumerate ALL controls in the window for diagnostics
+Write-Host ""
+Write-Host "UI Automation tree (all descendants):"
+$allCondition = [System.Windows.Automation.Condition]::TrueCondition
+$allElements = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $allCondition)
+Write-Host "  Total elements: $($allElements.Count)"
+foreach ($el in $allElements) {
+    $ct = $el.Current.ControlType.ProgrammaticName
+    $name = $el.Current.Name
+    $aid = $el.Current.AutomationId
+    $cls = $el.Current.ClassName
+    $patterns = @()
+    try { if ($el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)) { $patterns += "Value" } } catch {}
+    try { if ($el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)) { $patterns += "Invoke" } } catch {}
+    $pstr = if ($patterns.Count -gt 0) { " [" + ($patterns -join ",") + "]" } else { "" }
+    Write-Host "  $ct | Name='$name' | AutomationId='$aid' | Class='$cls'$pstr"
+}
+
+# Find text input fields (Edit controls)
+$editCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Edit)
+$edits = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+
+Write-Host ""
+Write-Host "Found $($edits.Count) Edit control(s)"
+
+if ($edits.Count -ge 2) {
+    # Set username in first edit field
+    Write-Host "Setting username in field 0..."
+    try {
+        $valuePattern = $edits[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $valuePattern.SetValue($UserId)
+        Write-Host "  Username set via ValuePattern"
+    } catch {
+        Write-Host "  ValuePattern failed: $_ - trying SendKeys fallback"
+        $edits[0].SetFocus()
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait($UserId)
+    }
+
+    # Set TOTP in second edit field
+    Write-Host "Setting TOTP in field 1..."
+    try {
+        $valuePattern = $edits[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $valuePattern.SetValue($otp)
+        Write-Host "  TOTP set via ValuePattern"
+    } catch {
+        Write-Host "  ValuePattern failed: $_ - trying SendKeys fallback"
+        $edits[1].SetFocus()
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait($otp)
+    }
+
+    # Find and click the login/submit button
+    Write-Host "Looking for login button..."
+    $buttonCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Button)
+    $buttons = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    Write-Host "  Found $($buttons.Count) button(s)"
+
+    $loginButton = $null
+    foreach ($btn in $buttons) {
+        $btnName = $btn.Current.Name
+        Write-Host "  Button: '$btnName'"
+        if ($btnName -match 'Log|Sign|OK|Submit|Connect') {
+            $loginButton = $btn
+        }
+    }
+
+    if ($loginButton) {
+        Write-Host "Clicking button: '$($loginButton.Current.Name)'"
+        try {
+            $invokePattern = $loginButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+            $invokePattern.Invoke()
+        } catch {
+            Write-Host "  InvokePattern failed: $_ - trying Enter key"
+            $edits[1].SetFocus()
+            Start-Sleep -Milliseconds 200
+            [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        }
+    } else {
+        Write-Host "No login button found, pressing Enter..."
+        $edits[1].SetFocus()
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    }
+} elseif ($edits.Count -eq 1) {
+    Write-Host "Only 1 edit field found - might be a single-step login"
+    Write-Host "Setting username..."
+    try {
+        $valuePattern = $edits[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+        $valuePattern.SetValue($UserId)
+    } catch {
+        $edits[0].SetFocus()
+        Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait($UserId)
+    }
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait($otp)
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+} else {
+    Write-Host "WARNING: No edit fields found! Falling back to WScript.Shell SendKeys..."
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.AppActivate($proc.Id)
+    Start-Sleep -Milliseconds 500
+    $wshell.SendKeys($UserId)
+    Start-Sleep -Milliseconds 200
+    $wshell.SendKeys("{TAB}")
+    Start-Sleep -Milliseconds 200
+    $wshell.SendKeys($otp)
+    Start-Sleep -Milliseconds 200
+    $wshell.SendKeys("{ENTER}")
+}
+
+Write-Host ""
+Write-Host "Credentials injected, waiting for authentication..."
 Start-Sleep -Seconds 10
 
 # === Post-authentication diagnostics ===
