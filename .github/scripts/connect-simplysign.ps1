@@ -117,12 +117,6 @@ Start-Sleep -Seconds 5
 # Diagnostic: log username info (without revealing full value)
 Write-Host "Username length: $($UserId.Length), starts with: $($UserId.Substring(0, [Math]::Min(3, $UserId.Length)))..."
 
-# Re-generate TOTP right before injection
-$otp = [Totp]::Now($Base32, $Digits, $Period, $Algorithm)
-$epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$remaining = $Period - ($epoch % $Period)
-Write-Host "Fresh TOTP ($Algorithm): $otp (valid for ${remaining}s)"
-
 # === Use UI Automation to inject credentials directly into fields ===
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -152,123 +146,170 @@ if (-not $ssWindow) {
 
 Write-Host "Found window: $($ssWindow.Current.Name)"
 
-# Enumerate ALL controls in the window for diagnostics
-Write-Host ""
-Write-Host "UI Automation tree (all descendants):"
 $allCondition = [System.Windows.Automation.Condition]::TrueCondition
+
+# === Step 1: Dismiss update dialog if present ===
+Write-Host ""
+Write-Host "Checking for update dialog..."
 $allElements = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $allCondition)
-Write-Host "  Total elements: $($allElements.Count)"
+
+# Look for the "New version" update prompt
+$updateDialog = $null
+$noButton = $null
 foreach ($el in $allElements) {
-    $ct = $el.Current.ControlType.ProgrammaticName
     $name = $el.Current.Name
-    $aid = $el.Current.AutomationId
-    $cls = $el.Current.ClassName
-    $patterns = @()
-    try { if ($el.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)) { $patterns += "Value" } } catch {}
-    try { if ($el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)) { $patterns += "Invoke" } } catch {}
-    $pstr = if ($patterns.Count -gt 0) { " [" + ($patterns -join ",") + "]" } else { "" }
-    Write-Host "  $ct | Name='$name' | AutomationId='$aid' | Class='$cls'$pstr"
+    if ($name -match 'New version.*found') {
+        $updateDialog = $el
+        Write-Host "  Found update dialog: '$name'"
+    }
+    # The No button has AutomationId='7' in the #32770 dialog
+    if ($el.Current.AutomationId -eq '7' -and $el.Current.Name -eq 'No') {
+        $noButton = $el
+    }
 }
 
-# Find text input fields (Edit controls)
-$editCondition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Edit)
-$edits = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
-
-Write-Host ""
-Write-Host "Found $($edits.Count) Edit control(s)"
-
-if ($edits.Count -ge 2) {
-    # Set username in first edit field
-    Write-Host "Setting username in field 0..."
+if ($updateDialog -and $noButton) {
+    Write-Host "Dismissing update dialog by clicking 'No'..."
     try {
-        $valuePattern = $edits[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-        $valuePattern.SetValue($UserId)
-        Write-Host "  Username set via ValuePattern"
+        $noButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Write-Host "  Clicked 'No' via InvokePattern"
     } catch {
-        Write-Host "  ValuePattern failed: $_ - trying SendKeys fallback"
-        $edits[0].SetFocus()
+        Write-Host "  InvokePattern failed, trying SetFocus + SendKeys..."
+        $noButton.SetFocus()
         Start-Sleep -Milliseconds 200
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    }
+    Start-Sleep -Seconds 2
+    Write-Host "Update dialog dismissed"
+} elseif ($updateDialog) {
+    Write-Host "  Update dialog found but No button not found, pressing Escape..."
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.AppActivate($proc.Id)
+    Start-Sleep -Milliseconds 300
+    $wshell.SendKeys("{ESCAPE}")
+    Start-Sleep -Seconds 2
+} else {
+    Write-Host "  No update dialog found"
+}
+
+# === Step 2: Re-generate TOTP right before filling fields ===
+$otp = [Totp]::Now($Base32, $Digits, $Period, $Algorithm)
+$epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$remaining = $Period - ($epoch % $Period)
+Write-Host ""
+Write-Host "Fresh TOTP ($Algorithm): $otp (valid for ${remaining}s)"
+
+# === Step 3: Find login form fields (WinForms controls show as Pane, not Edit) ===
+Write-Host ""
+Write-Host "Finding login form controls..."
+
+# Re-enumerate after dismissing update dialog
+$allElements = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $allCondition)
+
+# Find EDIT fields by WinForms class name (they appear as ControlType.Pane)
+$idField = $null
+$tokenField = $null
+$okButton = $null
+
+foreach ($el in $allElements) {
+    $cls = $el.Current.ClassName
+    $aid = $el.Current.AutomationId
+    $name = $el.Current.Name
+
+    # The ID (email) field: AutomationId='262190', Class contains 'EDIT'
+    if ($cls -match 'EDIT' -and $aid -eq '262190') {
+        $idField = $el
+        Write-Host "  Found ID field (AutomationId=$aid)"
+    }
+    # The Token field: AutomationId='131642', Class contains 'EDIT'
+    if ($cls -match 'EDIT' -and $aid -eq '131642') {
+        $tokenField = $el
+        Write-Host "  Found Token field (AutomationId=$aid)"
+    }
+    # The Ok button: AutomationId='131526', Class contains 'BUTTON'
+    if ($cls -match 'BUTTON' -and $aid -eq '131526') {
+        $okButton = $el
+        Write-Host "  Found Ok button (AutomationId=$aid)"
+    }
+}
+
+# Fallback: find EDIT fields by class name pattern if specific IDs not found
+if (-not $idField -or -not $tokenField) {
+    Write-Host "  Specific IDs not found, searching by class pattern..."
+    $editFields = @()
+    foreach ($el in $allElements) {
+        if ($el.Current.ClassName -match 'EDIT') {
+            $editFields += $el
+            Write-Host "  Found EDIT-class control: AutomationId='$($el.Current.AutomationId)'"
+        }
+    }
+    if ($editFields.Count -ge 2 -and -not $idField) { $idField = $editFields[1] }
+    if ($editFields.Count -ge 1 -and -not $tokenField) { $tokenField = $editFields[0] }
+}
+
+if (-not $okButton) {
+    foreach ($el in $allElements) {
+        if ($el.Current.Name -eq 'Ok' -and $el.Current.ClassName -match 'BUTTON') {
+            $okButton = $el
+        }
+    }
+}
+
+# === Step 4: Fill in credentials ===
+if ($idField -and $tokenField) {
+    Write-Host ""
+    Write-Host "Setting ID (email)..."
+    try {
+        $idField.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($UserId)
+        Write-Host "  Set via ValuePattern"
+    } catch {
+        Write-Host "  ValuePattern failed ($($_.Exception.Message)), using SetFocus + SendKeys"
+        $idField.SetFocus()
+        Start-Sleep -Milliseconds 300
+        [System.Windows.Forms.SendKeys]::SendWait("^a")
+        Start-Sleep -Milliseconds 100
         [System.Windows.Forms.SendKeys]::SendWait($UserId)
     }
 
-    # Set TOTP in second edit field
-    Write-Host "Setting TOTP in field 1..."
+    Write-Host "Setting Token..."
     try {
-        $valuePattern = $edits[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-        $valuePattern.SetValue($otp)
-        Write-Host "  TOTP set via ValuePattern"
+        $tokenField.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($otp)
+        Write-Host "  Set via ValuePattern"
     } catch {
-        Write-Host "  ValuePattern failed: $_ - trying SendKeys fallback"
-        $edits[1].SetFocus()
-        Start-Sleep -Milliseconds 200
+        Write-Host "  ValuePattern failed ($($_.Exception.Message)), using SetFocus + SendKeys"
+        $tokenField.SetFocus()
+        Start-Sleep -Milliseconds 300
         [System.Windows.Forms.SendKeys]::SendWait($otp)
     }
 
-    # Find and click the login/submit button
-    Write-Host "Looking for login button..."
-    $buttonCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Button)
-    $buttons = $ssWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
-    Write-Host "  Found $($buttons.Count) button(s)"
+    Start-Sleep -Milliseconds 300
 
-    $loginButton = $null
-    foreach ($btn in $buttons) {
-        $btnName = $btn.Current.Name
-        Write-Host "  Button: '$btnName'"
-        if ($btnName -match 'Log|Sign|OK|Submit|Connect') {
-            $loginButton = $btn
-        }
-    }
-
-    if ($loginButton) {
-        Write-Host "Clicking button: '$($loginButton.Current.Name)'"
+    Write-Host "Clicking Ok..."
+    if ($okButton) {
         try {
-            $invokePattern = $loginButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-            $invokePattern.Invoke()
+            $okButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+            Write-Host "  Clicked via InvokePattern"
         } catch {
-            Write-Host "  InvokePattern failed: $_ - trying Enter key"
-            $edits[1].SetFocus()
+            Write-Host "  InvokePattern failed, using SetFocus + Enter"
+            $okButton.SetFocus()
             Start-Sleep -Milliseconds 200
             [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
         }
     } else {
-        Write-Host "No login button found, pressing Enter..."
-        $edits[1].SetFocus()
+        Write-Host "  Ok button not found, pressing Enter in token field..."
+        $tokenField.SetFocus()
         Start-Sleep -Milliseconds 200
         [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
     }
-} elseif ($edits.Count -eq 1) {
-    Write-Host "Only 1 edit field found - might be a single-step login"
-    Write-Host "Setting username..."
-    try {
-        $valuePattern = $edits[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-        $valuePattern.SetValue($UserId)
-    } catch {
-        $edits[0].SetFocus()
-        Start-Sleep -Milliseconds 200
-        [System.Windows.Forms.SendKeys]::SendWait($UserId)
-    }
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait($otp)
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 } else {
-    Write-Host "WARNING: No edit fields found! Falling back to WScript.Shell SendKeys..."
-    $wshell = New-Object -ComObject WScript.Shell
-    $wshell.AppActivate($proc.Id)
-    Start-Sleep -Milliseconds 500
-    $wshell.SendKeys($UserId)
-    Start-Sleep -Milliseconds 200
-    $wshell.SendKeys("{TAB}")
-    Start-Sleep -Milliseconds 200
-    $wshell.SendKeys($otp)
-    Start-Sleep -Milliseconds 200
-    $wshell.SendKeys("{ENTER}")
+    Write-Host "ERROR: Could not find login form fields!"
+    Write-Host "  ID field: $($idField -ne $null)"
+    Write-Host "  Token field: $($tokenField -ne $null)"
+    Write-Host "Dumping all elements:"
+    foreach ($el in $allElements) {
+        Write-Host "  Class='$($el.Current.ClassName)' | Name='$($el.Current.Name)' | AID='$($el.Current.AutomationId)'"
+    }
+    exit 1
 }
 
 Write-Host ""
