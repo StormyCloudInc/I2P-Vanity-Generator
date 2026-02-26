@@ -91,7 +91,9 @@ func Run(w *app.Window) error {
 		updateDismissBtn widget.Clickable
 		updateInstallBtn widget.Clickable
 		updateCancelBtn  widget.Clickable
+		scrollList       widget.List
 	)
+	scrollList.Axis = layout.Vertical
 	prefixEditor.SingleLine = true
 	coreSlider.Value = 1.0 // Start at max cores
 
@@ -328,7 +330,7 @@ func Run(w *app.Window) error {
 				s.updateEstimate()
 			}
 
-			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &netI2PBtn, &netTorBtn, &updateBannerBtn, &updateDismissBtn)
+			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &netI2PBtn, &netTorBtn, &updateBannerBtn, &updateDismissBtn, &scrollList)
 
 			// Draw opt-in overlay on top
 			if s.showOptIn {
@@ -355,7 +357,7 @@ func Run(w *app.Window) error {
 	}
 }
 
-func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable, updateBannerBtn, updateDismissBtn *widget.Clickable) layout.Dimensions {
+func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable, updateBannerBtn, updateDismissBtn *widget.Clickable, scrollList *widget.List) layout.Dimensions {
 	// Center content horizontally, pin to top, cap width at 460dp
 	return layout.N.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		maxW := gtx.Dp(460)
@@ -364,16 +366,20 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 			gtx.Constraints.Min.X = maxW
 		}
 
-		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(16), Left: unit.Dp(30), Right: unit.Dp(30)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				// Header
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHeader(gtx, th)
-				}),
-				layout.Rigid(vspace(10)),
+		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(30), Right: unit.Dp(30)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			// Sections: 0=header, 1=spacer, 2=update banner, 3=input card, 4=spacer, 5=results card, 6=bottom spacer
+			const numSections = 7
 
-				// Update banner (conditional)
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			list := material.List(th, scrollList)
+			list.Indicator.MinorWidth = unit.Dp(4)
+			list.Indicator.Color = colorMuted
+			return list.Layout(gtx, numSections, func(gtx layout.Context, index int) layout.Dimensions {
+				switch index {
+				case 0: // Header
+					return layoutHeader(gtx, th)
+				case 1: // Spacer after header
+					return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
+				case 2: // Update banner (conditional)
 					s.mu.Lock()
 					available := s.updateAvailable
 					rel := s.updateRelease
@@ -384,19 +390,17 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 					return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layoutUpdateBanner(gtx, th, rel, updateBannerBtn, updateDismissBtn)
 					})
-				}),
-
-				// Input card
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				case 3: // Input card
 					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores, gpuToggle, netI2PBtn, netTorBtn)
-				}),
-				layout.Rigid(vspace(14)),
-
-				// Results card
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				case 4: // Spacer between cards
+					return layout.Spacer{Height: unit.Dp(14)}.Layout(gtx)
+				case 5: // Results card
 					return layoutResultsCard(gtx, th, s, saveBtn)
-				}),
-			)
+				case 6: // Bottom spacer
+					return layout.Spacer{Height: unit.Dp(4)}.Layout(gtx)
+				}
+				return layout.Dimensions{}
+			})
 		})
 	})
 }
@@ -1231,36 +1235,41 @@ func (s *state) save() {
 		addr = addr[:16]
 	}
 
-	// Resolve to absolute path so user knows exactly where files are saved
-	cwd, _ := os.Getwd()
+	// Save next to the executable, not the working directory
+	exePath, err := os.Executable()
+	if err != nil {
+		s.mu.Lock()
+		s.status = "Save error: " + err.Error()
+		s.mu.Unlock()
+		return
+	}
+	exeDir := filepath.Dir(exePath)
 
-	var path string
+	var savePath string
 	switch network {
 	case address.NetworkTorV3:
 		// Tor v3: save as a hidden service directory
-		path = "vanity_" + addr
-		if err := r.Candidate.SaveKeys(path); err != nil {
+		savePath = filepath.Join(exeDir, "vanity_"+addr)
+		if err := r.Candidate.SaveKeys(savePath); err != nil {
 			s.mu.Lock()
 			s.status = "Save error: " + err.Error()
 			s.mu.Unlock()
 			return
 		}
-		absPath := filepath.Join(cwd, path)
 		s.mu.Lock()
-		s.status = "Keys saved to " + absPath
+		s.status = "Keys saved to " + savePath
 		s.mu.Unlock()
 	default:
 		// I2P: save as a .dat file
-		path = "vanity_" + addr + ".dat"
-		if err := r.Candidate.SaveKeys(path); err != nil {
+		savePath = filepath.Join(exeDir, "vanity_"+addr+".dat")
+		if err := r.Candidate.SaveKeys(savePath); err != nil {
 			s.mu.Lock()
 			s.status = "Save error: " + err.Error()
 			s.mu.Unlock()
 			return
 		}
-		absPath := filepath.Join(cwd, path)
 		s.mu.Lock()
-		s.status = "Keys saved to " + absPath
+		s.status = "Keys saved to " + savePath
 		s.mu.Unlock()
 	}
 }
