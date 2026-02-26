@@ -19,6 +19,8 @@ type Payload struct {
 	DurationSeconds float64 `json:"duration_seconds"`
 	CoresUsed       int     `json:"cores_used"`
 	Attempts        uint64  `json:"attempts"`
+	GPUUsed         bool    `json:"gpu_used,omitempty"`
+	GPUName         string  `json:"gpu_name,omitempty"`
 }
 
 // Submit sends the telemetry payload in a background goroutine.

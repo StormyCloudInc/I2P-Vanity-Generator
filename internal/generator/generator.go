@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/i2p-vanitygen/internal/destination"
+	"github.com/go-i2p/i2p-vanitygen/internal/gpu"
 )
 
 // Result holds a successfully found vanity destination.
@@ -27,17 +28,21 @@ type Stats struct {
 
 // Generator coordinates parallel vanity address searching.
 type Generator struct {
-	prefix   string
-	numCores int
-	cancel   context.CancelFunc
-	mu       sync.Mutex
+	prefix    string
+	numCores  int
+	useGPU    bool
+	gpuDevice int
+	cancel    context.CancelFunc
+	mu        sync.Mutex
 }
 
 // New creates a new vanity generator.
-func New(prefix string, numCores int) *Generator {
+func New(prefix string, numCores int, useGPU bool, gpuDevice int) *Generator {
 	return &Generator{
-		prefix:   strings.ToLower(prefix),
-		numCores: numCores,
+		prefix:    strings.ToLower(prefix),
+		numCores:  numCores,
+		useGPU:    useGPU,
+		gpuDevice: gpuDevice,
 	}
 }
 
@@ -58,12 +63,23 @@ func (g *Generator) Start(ctx context.Context) (<-chan Result, <-chan Stats) {
 	var workerWg sync.WaitGroup
 	var statsWg sync.WaitGroup
 
-	// Launch worker goroutines
+	// Launch GPU worker if enabled
+	cpuWorkerOffset := 0
+	if g.useGPU && gpu.Available() {
+		cpuWorkerOffset = 1 // reserve workerID 0 counter space for GPU
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			g.gpuWorker(ctx, &totalChecked, &found, resultCh, startTime)
+		}()
+	}
+
+	// Launch CPU worker goroutines
 	for i := 0; i < g.numCores; i++ {
 		workerWg.Add(1)
 		go func(workerID int) {
 			defer workerWg.Done()
-			g.worker(ctx, workerID, &totalChecked, &found, resultCh)
+			g.worker(ctx, workerID+cpuWorkerOffset, &totalChecked, &found, resultCh)
 		}(i)
 	}
 
@@ -114,6 +130,60 @@ func (g *Generator) Stop() {
 	defer g.mu.Unlock()
 	if g.cancel != nil {
 		g.cancel()
+	}
+}
+
+func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, found *atomic.Bool, resultCh chan<- Result, startTime time.Time) {
+	dest, err := destination.NewRandom()
+	if err != nil {
+		return
+	}
+
+	batchSize := uint64(1 << 22) // ~4M hashes per dispatch
+	gpuW, err := gpu.NewWorker(gpu.WorkerConfig{
+		DeviceIndex:  g.gpuDevice,
+		DestTemplate: dest.Raw,
+		Prefix:       g.prefix,
+		BatchSize:    batchSize,
+	})
+	if err != nil {
+		return // GPU unavailable, CPU workers continue
+	}
+	defer gpuW.Close()
+
+	counter := uint64(0) // GPU uses workerID 0 counter space
+
+	for {
+		if found.Load() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		result, err := gpuW.RunBatch(counter)
+		if err != nil {
+			return // GPU error, stop GPU worker
+		}
+
+		totalChecked.Add(result.Checked)
+		counter += result.Checked
+
+		if result.Found {
+			if found.CompareAndSwap(false, true) {
+				// Reconstruct the matching destination on CPU
+				dest.MutateEncryptionKey(result.MatchCounter)
+				resultCh <- Result{
+					Destination: dest,
+					Address:     dest.FullB32Address(),
+					Attempts:    totalChecked.Load(),
+					Duration:    time.Since(startTime),
+				}
+			}
+			return
+		}
 	}
 }
 

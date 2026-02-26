@@ -1,0 +1,33 @@
+name: Test GPU Build
+
+on:
+  push:
+    branches: ['gpu-support']
+
+jobs:
+  build-macos-gpu:
+    runs-on: [self-hosted, macOS]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build macOS arm64 with GPU support
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 1
+          CC: clang
+        run: |
+          go version
+          echo "Building with Metal GPU support..."
+          LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=gpu-test"
+          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-darwin-arm64" .
+          echo "Build successful!"
+          ls -la i2p-vanitygen-darwin-arm64
+          file i2p-vanitygen-darwin-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2p-vanitygen-darwin-arm64-gpu-test
+          path: i2p-vanitygen-darwin-arm64

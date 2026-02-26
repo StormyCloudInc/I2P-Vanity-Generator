@@ -25,6 +25,7 @@ import (
 	"github.com/go-i2p/i2p-vanitygen/internal/config"
 	"github.com/go-i2p/i2p-vanitygen/internal/destination"
 	"github.com/go-i2p/i2p-vanitygen/internal/generator"
+	"github.com/go-i2p/i2p-vanitygen/internal/gpu"
 	"github.com/go-i2p/i2p-vanitygen/internal/telemetry"
 	"github.com/go-i2p/i2p-vanitygen/internal/updater"
 	"github.com/go-i2p/i2p-vanitygen/internal/version"
@@ -43,6 +44,12 @@ type state struct {
 	lastResult *generator.Result
 	cancel     context.CancelFunc
 	gen        *generator.Generator
+
+	// GPU
+	gpuAvailable bool
+	gpuDevices   []gpu.Device
+	useGPU       bool
+	gpuDevice    int
 
 	showOptIn        bool
 	telemetryOptedIn bool
@@ -70,6 +77,7 @@ func Run(w *app.Window) error {
 		startBtn         widget.Clickable
 		saveBtn          widget.Clickable
 		coreSlider       widget.Float
+		gpuToggle        widget.Bool
 		optInYesBtn      widget.Clickable
 		optInNoBtn       widget.Clickable
 		updateBannerBtn  widget.Clickable
@@ -86,6 +94,14 @@ func Run(w *app.Window) error {
 		estimate:         "Awaiting input...",
 		showOptIn:        !cfg.TelemetryAsked,
 		telemetryOptedIn: cfg.TelemetryOptedIn,
+	}
+
+	// Detect GPU devices
+	if devices, err := gpu.ListDevices(); err == nil && len(devices) > 0 {
+		s.gpuAvailable = true
+		s.gpuDevices = devices
+		s.useGPU = true
+		gpuToggle.Value = true
 	}
 
 	// Set the window icon (Windows title bar)
@@ -264,13 +280,19 @@ func Run(w *app.Window) error {
 				}
 			}
 
+			// Sync GPU toggle
+			if !s.running && s.gpuAvailable && gpuToggle.Value != s.useGPU {
+				s.useGPU = gpuToggle.Value
+				s.updateEstimate()
+			}
+
 			newPrefix := strings.ToLower(prefixEditor.Text())
 			if newPrefix != s.prefix {
 				s.prefix = newPrefix
 				s.updateEstimate()
 			}
 
-			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &updateBannerBtn, &updateDismissBtn)
+			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &updateBannerBtn, &updateDismissBtn)
 
 			// Draw opt-in overlay on top
 			if s.showOptIn {
@@ -297,7 +319,7 @@ func Run(w *app.Window) error {
 	}
 }
 
-func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, updateBannerBtn, updateDismissBtn *widget.Clickable) layout.Dimensions {
+func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, updateBannerBtn, updateDismissBtn *widget.Clickable) layout.Dimensions {
 	// Center content horizontally, pin to top, cap width at 460dp
 	return layout.N.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		maxW := gtx.Dp(460)
@@ -330,7 +352,7 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 
 				// Input card
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores)
+					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores, gpuToggle)
 				}),
 				layout.Rigid(vspace(20)),
 
@@ -662,7 +684,7 @@ func layoutLogoDots(gtx layout.Context, dotSize, gap unit.Dp) layout.Dimensions 
 	return layout.Dimensions{Size: image.Pt(totalW, totalH)}
 }
 
-func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn *widget.Clickable, coreSlider *widget.Float, maxCores int) layout.Dimensions {
+func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool) layout.Dimensions {
 	return cardWithBorder(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Target Prefix — force full width
@@ -701,6 +723,37 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 						return layoutCoreSelector(gtx, th, s, coreSlider, maxCores)
 					}),
 				)
+			}),
+
+			// GPU Acceleration (only shown when GPU is available)
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !s.gpuAvailable {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Top: unit.Dp(18)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(sectionLabel(th, "GPU ACCELERATION")),
+						layout.Rigid(vspace(8)),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									sw := material.Switch(th, gpuToggle, "Enable GPU")
+									sw.Color.Enabled = colorAccent
+									return sw.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									name := "Unknown GPU"
+									if len(s.gpuDevices) > s.gpuDevice {
+										name = s.gpuDevices[s.gpuDevice].Name
+									}
+									return layout.Inset{Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return badge(gtx, th, name)
+									})
+								}),
+							)
+						}),
+					)
+				})
 			}),
 			layout.Rigid(vspace(20)),
 
@@ -976,6 +1029,9 @@ func (s *state) updateEstimate() {
 	}
 	attempts := destination.EstimateAttempts(len(s.prefix))
 	keysPerSec := 500_000.0 * float64(s.cores)
+	if s.useGPU && s.gpuAvailable {
+		keysPerSec += 100_000_000.0 // conservative GPU estimate
+	}
 	seconds := attempts / keysPerSec
 	s.mu.Lock()
 	if seconds < 1 {
@@ -1000,7 +1056,7 @@ func (s *state) start(w *app.Window) {
 	s.lastResult = nil
 	s.mu.Unlock()
 
-	gen := generator.New(s.prefix, s.cores)
+	gen := generator.New(s.prefix, s.cores, s.useGPU, s.gpuDevice)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s.mu.Lock()
@@ -1034,12 +1090,17 @@ func (s *state) start(w *app.Window) {
 			w.Invalidate()
 
 			if optedIn {
-				telemetry.Submit(telemetry.Payload{
+				payload := telemetry.Payload{
 					PrefixLength:    prefixLen,
 					DurationSeconds: result.Duration.Seconds(),
 					CoresUsed:       cores,
 					Attempts:        result.Attempts,
-				})
+					GPUUsed:         s.useGPU && s.gpuAvailable,
+				}
+				if payload.GPUUsed && len(s.gpuDevices) > 0 {
+					payload.GPUName = s.gpuDevices[s.gpuDevice].Name
+				}
+				telemetry.Submit(payload)
 			}
 		}
 	}()
