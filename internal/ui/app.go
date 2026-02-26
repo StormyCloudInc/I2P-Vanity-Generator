@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -363,13 +364,13 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 			gtx.Constraints.Min.X = maxW
 		}
 
-		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(30), Left: unit.Dp(30), Right: unit.Dp(30)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(16), Left: unit.Dp(30), Right: unit.Dp(30)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				// Header
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layoutHeader(gtx, th)
 				}),
-				layout.Rigid(vspace(16)),
+				layout.Rigid(vspace(10)),
 
 				// Update banner (conditional)
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -389,7 +390,7 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores, gpuToggle, netI2PBtn, netTorBtn)
 				}),
-				layout.Rigid(vspace(20)),
+				layout.Rigid(vspace(14)),
 
 				// Results card
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -733,7 +734,7 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 					}),
 				)
 			}),
-			layout.Rigid(vspace(18)),
+			layout.Rigid(vspace(14)),
 
 			// Target Prefix — force full width
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -760,7 +761,7 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 				}
 				return layout.Dimensions{}
 			}),
-			layout.Rigid(vspace(18)),
+			layout.Rigid(vspace(14)),
 
 			// CPU Cores
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -803,7 +804,7 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 					)
 				})
 			}),
-			layout.Rigid(vspace(20)),
+			layout.Rigid(vspace(14)),
 
 			// Start button — force full width
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -864,7 +865,7 @@ func segmentBtn(gtx layout.Context, th *material.Theme, btn *widget.Clickable, l
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(14), Bottom: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, label)
 						lbl.Color = fg
@@ -1230,6 +1231,9 @@ func (s *state) save() {
 		addr = addr[:16]
 	}
 
+	// Resolve to absolute path so user knows exactly where files are saved
+	cwd, _ := os.Getwd()
+
 	var path string
 	switch network {
 	case address.NetworkTorV3:
@@ -1241,8 +1245,9 @@ func (s *state) save() {
 			s.mu.Unlock()
 			return
 		}
+		absPath := filepath.Join(cwd, path)
 		s.mu.Lock()
-		s.status = "Keys saved to " + path + "/"
+		s.status = "Keys saved to " + absPath
 		s.mu.Unlock()
 	default:
 		// I2P: save as a .dat file
@@ -1253,8 +1258,9 @@ func (s *state) save() {
 			s.mu.Unlock()
 			return
 		}
+		absPath := filepath.Join(cwd, path)
 		s.mu.Lock()
-		s.status = "Keys saved to " + path
+		s.status = "Keys saved to " + absPath
 		s.mu.Unlock()
 	}
 }
