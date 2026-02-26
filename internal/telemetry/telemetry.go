@@ -19,6 +19,7 @@ type Payload struct {
 	DurationSeconds float64 `json:"duration_seconds"`
 	CoresUsed       int     `json:"cores_used"`
 	Attempts        uint64  `json:"attempts"`
+	Network         string  `json:"network,omitempty"`
 	GPUUsed         bool    `json:"gpu_used,omitempty"`
 	GPUName         string  `json:"gpu_name,omitempty"`
 }

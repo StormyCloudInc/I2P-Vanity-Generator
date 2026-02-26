@@ -18,6 +18,7 @@ type Config struct {
 	TelemetryOptedIn bool   `json:"telemetry_opted_in"`
 	SkippedVersion   string `json:"skipped_version,omitempty"`
 	GPUEnabled       *bool  `json:"gpu_enabled,omitempty"`
+	Network          string `json:"network,omitempty"`
 }
 
 // Load reads the config from disk. If the file does not exist,

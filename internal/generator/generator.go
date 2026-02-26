@@ -7,16 +7,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-i2p/i2p-vanitygen/internal/destination"
+	"github.com/go-i2p/i2p-vanitygen/internal/address"
 	"github.com/go-i2p/i2p-vanitygen/internal/gpu"
 )
 
-// Result holds a successfully found vanity destination.
+// Result holds a successfully found vanity address.
 type Result struct {
-	Destination *destination.Destination
-	Address     string
-	Attempts    uint64
-	Duration    time.Duration
+	Candidate address.Candidate
+	Address   string
+	Attempts  uint64
+	Duration  time.Duration
 }
 
 // Stats holds progress information for the search.
@@ -28,6 +28,7 @@ type Stats struct {
 
 // Generator coordinates parallel vanity address searching.
 type Generator struct {
+	scheme    address.Scheme
 	prefix    string
 	numCores  int
 	useGPU    bool
@@ -37,8 +38,9 @@ type Generator struct {
 }
 
 // New creates a new vanity generator.
-func New(prefix string, numCores int, useGPU bool, gpuDevice int) *Generator {
+func New(scheme address.Scheme, prefix string, numCores int, useGPU bool, gpuDevice int) *Generator {
 	return &Generator{
+		scheme:    scheme,
 		prefix:    strings.ToLower(prefix),
 		numCores:  numCores,
 		useGPU:    useGPU,
@@ -63,9 +65,9 @@ func (g *Generator) Start(ctx context.Context) (<-chan Result, <-chan Stats) {
 	var workerWg sync.WaitGroup
 	var statsWg sync.WaitGroup
 
-	// Launch GPU worker if enabled
+	// Launch GPU worker if enabled and scheme supports it
 	cpuWorkerOffset := 0
-	if g.useGPU && gpu.Available() {
+	if g.useGPU && g.scheme.SupportsGPU() && gpu.Available() {
 		cpuWorkerOffset = 1 // reserve workerID 0 counter space for GPU
 		workerWg.Add(1)
 		go func() {
@@ -134,15 +136,20 @@ func (g *Generator) Stop() {
 }
 
 func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, found *atomic.Bool, resultCh chan<- Result, startTime time.Time) {
-	dest, err := destination.NewRandom()
+	// GPU only works with I2P scheme (needs the raw destination template)
+	cand, err := g.scheme.NewCandidate()
 	if err != nil {
 		return
+	}
+	i2pCand, ok := cand.(*address.I2PCandidate)
+	if !ok {
+		return // GPU not supported for this scheme
 	}
 
 	batchSize := uint64(1 << 22) // ~4M hashes per dispatch
 	gpuW, err := gpu.NewWorker(gpu.WorkerConfig{
 		DeviceIndex:  g.gpuDevice,
-		DestTemplate: dest.Raw,
+		DestTemplate: i2pCand.Raw(),
 		Prefix:       g.prefix,
 		BatchSize:    batchSize,
 	})
@@ -174,12 +181,12 @@ func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, 
 		if result.Found {
 			if found.CompareAndSwap(false, true) {
 				// Reconstruct the matching destination on CPU
-				dest.MutateEncryptionKey(result.MatchCounter)
+				i2pCand.Dest.MutateEncryptionKey(result.MatchCounter)
 				resultCh <- Result{
-					Destination: dest,
-					Address:     dest.FullB32Address(),
-					Attempts:    totalChecked.Load(),
-					Duration:    time.Since(startTime),
+					Candidate: i2pCand,
+					Address:   i2pCand.FullAddress(),
+					Attempts:  totalChecked.Load(),
+					Duration:  time.Since(startTime),
 				}
 			}
 			return
@@ -188,21 +195,31 @@ func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, 
 }
 
 func (g *Generator) worker(ctx context.Context, workerID int, totalChecked *atomic.Uint64, found *atomic.Bool, resultCh chan<- Result) {
-	dest, err := destination.NewRandom()
+	startTime := time.Now()
+
+	switch g.scheme.Network() {
+	case address.NetworkI2P:
+		g.i2pWorker(ctx, workerID, totalChecked, found, resultCh, startTime)
+	case address.NetworkTorV3:
+		g.torV3Worker(ctx, workerID, totalChecked, found, resultCh, startTime)
+	}
+}
+
+func (g *Generator) i2pWorker(ctx context.Context, workerID int, totalChecked *atomic.Uint64, found *atomic.Bool, resultCh chan<- Result, startTime time.Time) {
+	cand, err := g.scheme.NewCandidate()
 	if err != nil {
 		return
 	}
+	i2pCand := cand.(*address.I2PCandidate)
 
 	baseCounter := uint64(workerID) << 48
 	counter := baseCounter
-	startTime := time.Now()
 	batchSize := uint64(1024)
 
 	for {
 		if found.Load() {
 			return
 		}
-		// Check context every batchSize iterations to reduce overhead
 		if (counter-baseCounter)%batchSize == 0 {
 			select {
 			case <-ctx.Done():
@@ -211,22 +228,67 @@ func (g *Generator) worker(ctx context.Context, workerID int, totalChecked *atom
 			}
 		}
 
-		dest.MutateEncryptionKey(counter)
-		addr := dest.B32Address()
-
-		counter++
-		totalChecked.Add(1)
-
-		if strings.HasPrefix(addr, g.prefix) {
+		if i2pCand.MutateAndCheck(counter, g.prefix) {
+			totalChecked.Add(1)
+			counter++
 			if found.CompareAndSwap(false, true) {
 				resultCh <- Result{
-					Destination: dest,
-					Address:     dest.FullB32Address(),
-					Attempts:    totalChecked.Load(),
-					Duration:    time.Since(startTime),
+					Candidate: i2pCand,
+					Address:   i2pCand.FullAddress(),
+					Attempts:  totalChecked.Load(),
+					Duration:  time.Since(startTime),
 				}
 			}
 			return
 		}
+
+		counter++
+		totalChecked.Add(1)
+	}
+}
+
+func (g *Generator) torV3Worker(ctx context.Context, workerID int, totalChecked *atomic.Uint64, found *atomic.Bool, resultCh chan<- Result, startTime time.Time) {
+	cand, err := address.NewTorV3Candidate()
+	if err != nil {
+		return
+	}
+
+	// Each worker starts at a different offset to avoid overlap
+	if workerID > 0 {
+		cand.AdvanceBy(uint64(workerID) << 48)
+	}
+
+	batchSize := uint64(1024)
+	checked := uint64(0)
+
+	for {
+		if found.Load() {
+			return
+		}
+		if checked%batchSize == 0 {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+		}
+
+		if cand.CheckPrefix(g.prefix) {
+			totalChecked.Add(1)
+			checked++
+			if found.CompareAndSwap(false, true) {
+				resultCh <- Result{
+					Candidate: cand,
+					Address:   cand.FullAddress(),
+					Attempts:  totalChecked.Load(),
+					Duration:  time.Since(startTime),
+				}
+			}
+			return
+		}
+
+		cand.Advance()
+		checked++
+		totalChecked.Add(1)
 	}
 }

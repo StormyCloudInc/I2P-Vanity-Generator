@@ -22,8 +22,8 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/go-i2p/i2p-vanitygen/internal/address"
 	"github.com/go-i2p/i2p-vanitygen/internal/config"
-	"github.com/go-i2p/i2p-vanitygen/internal/destination"
 	"github.com/go-i2p/i2p-vanitygen/internal/generator"
 	"github.com/go-i2p/i2p-vanitygen/internal/gpu"
 	"github.com/go-i2p/i2p-vanitygen/internal/telemetry"
@@ -44,6 +44,10 @@ type state struct {
 	lastResult *generator.Result
 	cancel     context.CancelFunc
 	gen        *generator.Generator
+
+	// Network
+	network address.Network
+	scheme  address.Scheme
 
 	// GPU
 	gpuAvailable bool
@@ -78,6 +82,8 @@ func Run(w *app.Window) error {
 		saveBtn          widget.Clickable
 		coreSlider       widget.Float
 		gpuToggle        widget.Bool
+		netI2PBtn        widget.Clickable
+		netTorBtn        widget.Clickable
 		optInYesBtn      widget.Clickable
 		optInNoBtn       widget.Clickable
 		updateBannerBtn  widget.Clickable
@@ -88,8 +94,19 @@ func Run(w *app.Window) error {
 	prefixEditor.SingleLine = true
 	coreSlider.Value = 1.0 // Start at max cores
 
+	initNetwork := address.ParseNetwork(cfg.Network)
+	var initScheme address.Scheme
+	switch initNetwork {
+	case address.NetworkTorV3:
+		initScheme = address.TorV3Scheme{}
+	default:
+		initScheme = address.I2PScheme{}
+	}
+
 	s := &state{
 		cores:            maxCores,
+		network:          initNetwork,
+		scheme:           initScheme,
 		status:           "Idle",
 		estimate:         "Awaiting input...",
 		showOptIn:        !cfg.TelemetryAsked,
@@ -265,6 +282,24 @@ func Run(w *app.Window) error {
 				s.save()
 			}
 
+			// Handle network selector
+			if !s.running {
+				if netI2PBtn.Clicked(gtx) && s.network != address.NetworkI2P {
+					s.network = address.NetworkI2P
+					s.scheme = address.I2PScheme{}
+					s.result = ""
+					s.lastResult = nil
+					s.updateEstimate()
+				}
+				if netTorBtn.Clicked(gtx) && s.network != address.NetworkTorV3 {
+					s.network = address.NetworkTorV3
+					s.scheme = address.TorV3Scheme{}
+					s.result = ""
+					s.lastResult = nil
+					s.updateEstimate()
+				}
+			}
+
 			// Sync slider to core count
 			if !s.running {
 				newCores := int(coreSlider.Value*float32(maxCores-1)+0.5) + 1
@@ -280,8 +315,8 @@ func Run(w *app.Window) error {
 				}
 			}
 
-			// Sync GPU toggle
-			if !s.running && s.gpuAvailable && gpuToggle.Value != s.useGPU {
+			// Sync GPU toggle (only relevant for GPU-capable schemes)
+			if !s.running && s.gpuAvailable && s.scheme.SupportsGPU() && gpuToggle.Value != s.useGPU {
 				s.useGPU = gpuToggle.Value
 				s.updateEstimate()
 			}
@@ -292,7 +327,7 @@ func Run(w *app.Window) error {
 				s.updateEstimate()
 			}
 
-			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &updateBannerBtn, &updateDismissBtn)
+			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &netI2PBtn, &netTorBtn, &updateBannerBtn, &updateDismissBtn)
 
 			// Draw opt-in overlay on top
 			if s.showOptIn {
@@ -319,7 +354,7 @@ func Run(w *app.Window) error {
 	}
 }
 
-func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, updateBannerBtn, updateDismissBtn *widget.Clickable) layout.Dimensions {
+func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable, updateBannerBtn, updateDismissBtn *widget.Clickable) layout.Dimensions {
 	// Center content horizontally, pin to top, cap width at 460dp
 	return layout.N.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		maxW := gtx.Dp(460)
@@ -352,7 +387,7 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 
 				// Input card
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores, gpuToggle)
+					return layoutInputCard(gtx, th, s, prefixEditor, startBtn, coreSlider, maxCores, gpuToggle, netI2PBtn, netTorBtn)
 				}),
 				layout.Rigid(vspace(20)),
 
@@ -684,9 +719,22 @@ func layoutLogoDots(gtx layout.Context, dotSize, gap unit.Dp) layout.Dimensions 
 	return layout.Dimensions{Size: image.Pt(totalW, totalH)}
 }
 
-func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool) layout.Dimensions {
+func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable) layout.Dimensions {
 	return cardWithBorder(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Network selector
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(sectionLabel(th, "NETWORK")),
+					layout.Rigid(vspace(8)),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutNetworkSelector(gtx, th, s, netI2PBtn, netTorBtn)
+					}),
+				)
+			}),
+			layout.Rigid(vspace(18)),
+
 			// Target Prefix — force full width
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -703,7 +751,7 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 				if s.prefix == "" {
 					return layout.Dimensions{}
 				}
-				if err := destination.ValidatePrefix(s.prefix); err != nil {
+				if err := s.scheme.ValidatePrefix(s.prefix); err != nil {
 					return layout.Inset{Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, err.Error())
 						lbl.Color = color.NRGBA{R: 0xff, G: 0x44, B: 0x44, A: 0xff}
@@ -725,9 +773,9 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 				)
 			}),
 
-			// GPU Acceleration (only shown when GPU is available)
+			// GPU Acceleration (only shown when GPU is available and scheme supports it)
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if !s.gpuAvailable {
+				if !s.gpuAvailable || !s.scheme.SupportsGPU() {
 					return layout.Dimensions{}
 				}
 				return layout.Inset{Top: unit.Dp(18)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -778,6 +826,56 @@ func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEdi
 			}),
 		)
 	})
+}
+
+func layoutNetworkSelector(gtx layout.Context, th *material.Theme, s *state, i2pBtn, torBtn *widget.Clickable) layout.Dimensions {
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return layout.Flex{}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return segmentBtn(gtx, th, i2pBtn, "I2P (.b32.i2p)", s.network == address.NetworkI2P)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return segmentBtn(gtx, th, torBtn, "Tor v3 (.onion)", s.network == address.NetworkTorV3)
+		}),
+	)
+}
+
+func segmentBtn(gtx layout.Context, th *material.Theme, btn *widget.Clickable, label string, active bool) layout.Dimensions {
+	bg := colorInputBg
+	fg := colorLabel
+	borderColor := colorInputBdr
+	if active {
+		bg = color.NRGBA{R: 0x00, G: 0x2a, B: 0x33, A: 0xff}
+		fg = colorAccent
+		borderColor = colorAccent
+	}
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			sz := gtx.Constraints.Min
+			rr := gtx.Dp(6)
+			rrect := clip.RRect{Rect: image.Rect(0, 0, sz.X, sz.Y), NE: rr, NW: rr, SE: rr, SW: rr}
+			paint.FillShape(gtx.Ops, bg, rrect.Op(gtx.Ops))
+			paint.FillShape(gtx.Ops, borderColor, clip.Stroke{Path: rrect.Path(gtx.Ops), Width: 1}.Op())
+			return layout.Dimensions{Size: sz}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, label)
+						lbl.Color = fg
+						lbl.Font.Weight = font.SemiBold
+						lbl.Alignment = text.Middle
+						return lbl.Layout(gtx)
+					})
+				})
+			})
+		}),
+	)
 }
 
 func layoutCoreSelector(gtx layout.Context, th *material.Theme, s *state, slider *widget.Float, maxCores int) layout.Dimensions {
@@ -1021,15 +1119,15 @@ func vspace(dp float32) func(gtx layout.Context) layout.Dimensions {
 // --- State methods ---
 
 func (s *state) updateEstimate() {
-	if s.prefix == "" || destination.ValidatePrefix(s.prefix) != nil {
+	if s.prefix == "" || s.scheme.ValidatePrefix(s.prefix) != nil {
 		s.mu.Lock()
 		s.estimate = "Awaiting input..."
 		s.mu.Unlock()
 		return
 	}
-	attempts := destination.EstimateAttempts(len(s.prefix))
+	attempts := s.scheme.EstimateAttempts(len(s.prefix))
 	keysPerSec := 500_000.0 * float64(s.cores)
-	if s.useGPU && s.gpuAvailable {
+	if s.useGPU && s.gpuAvailable && s.scheme.SupportsGPU() {
 		keysPerSec += 100_000_000.0 // conservative GPU estimate
 	}
 	seconds := attempts / keysPerSec
@@ -1043,7 +1141,7 @@ func (s *state) updateEstimate() {
 }
 
 func (s *state) start(w *app.Window) {
-	if s.prefix == "" || destination.ValidatePrefix(s.prefix) != nil {
+	if s.prefix == "" || s.scheme.ValidatePrefix(s.prefix) != nil {
 		return
 	}
 
@@ -1056,7 +1154,7 @@ func (s *state) start(w *app.Window) {
 	s.lastResult = nil
 	s.mu.Unlock()
 
-	gen := generator.New(s.prefix, s.cores, s.useGPU, s.gpuDevice)
+	gen := generator.New(s.scheme, s.prefix, s.cores, s.useGPU, s.gpuDevice)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s.mu.Lock()
@@ -1095,7 +1193,8 @@ func (s *state) start(w *app.Window) {
 					DurationSeconds: result.Duration.Seconds(),
 					CoresUsed:       cores,
 					Attempts:        result.Attempts,
-					GPUUsed:         s.useGPU && s.gpuAvailable,
+					Network:         s.network.String(),
+					GPUUsed:         s.useGPU && s.gpuAvailable && s.scheme.SupportsGPU(),
 				}
 				if payload.GPUUsed && len(s.gpuDevices) > 0 {
 					payload.GPUName = s.gpuDevices[s.gpuDevice].Name
@@ -1119,24 +1218,45 @@ func (s *state) stop() {
 func (s *state) save() {
 	s.mu.Lock()
 	r := s.lastResult
+	network := s.network
 	s.mu.Unlock()
 	if r == nil {
 		return
 	}
-	addr := strings.ReplaceAll(r.Address, ".b32.i2p", "")
+
+	// Strip suffix to get a short name for the file/dir
+	addr := r.Candidate.Address()
 	if len(addr) > 16 {
 		addr = addr[:16]
 	}
-	path := "vanity_" + addr + ".dat"
-	if err := r.Destination.SaveKeys(path); err != nil {
+
+	var path string
+	switch network {
+	case address.NetworkTorV3:
+		// Tor v3: save as a hidden service directory
+		path = "vanity_" + addr
+		if err := r.Candidate.SaveKeys(path); err != nil {
+			s.mu.Lock()
+			s.status = "Save error: " + err.Error()
+			s.mu.Unlock()
+			return
+		}
 		s.mu.Lock()
-		s.status = "Save error: " + err.Error()
+		s.status = "Keys saved to " + path + "/"
 		s.mu.Unlock()
-		return
+	default:
+		// I2P: save as a .dat file
+		path = "vanity_" + addr + ".dat"
+		if err := r.Candidate.SaveKeys(path); err != nil {
+			s.mu.Lock()
+			s.status = "Save error: " + err.Error()
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Lock()
+		s.status = "Keys saved to " + path
+		s.mu.Unlock()
 	}
-	s.mu.Lock()
-	s.status = "Keys saved to " + path
-	s.mu.Unlock()
 }
 
 func formatNumber(n float64) string {
