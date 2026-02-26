@@ -853,6 +853,9 @@ func segmentBtn(gtx layout.Context, th *material.Theme, btn *widget.Clickable, l
 		borderColor = colorAccent
 	}
 
+	// Force fill allocated width
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			sz := gtx.Constraints.Min
@@ -863,6 +866,7 @@ func segmentBtn(gtx layout.Context, th *material.Theme, btn *widget.Clickable, l
 			return layout.Dimensions{Size: sz}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(18), Bottom: unit.Dp(18)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
