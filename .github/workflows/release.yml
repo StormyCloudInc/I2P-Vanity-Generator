@@ -112,7 +112,33 @@ jobs:
           CC: clang
         run: |
           LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}"
-          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-darwin-arm64" .
+          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen" .
+
+      - name: Create app icon
+        run: |
+          ICONSET="AppIcon.iconset"
+          mkdir -p "$ICONSET"
+          sips -z 16 16     winres/icon16.png  --out "$ICONSET/icon_16x16.png"
+          sips -z 32 32     winres/icon32.png  --out "$ICONSET/icon_16x16@2x.png"
+          sips -z 32 32     winres/icon32.png  --out "$ICONSET/icon_32x32.png"
+          sips -z 64 64     winres/icon64.png  --out "$ICONSET/icon_32x32@2x.png"
+          sips -z 128 128   winres/icon128.png --out "$ICONSET/icon_128x128.png"
+          sips -z 256 256   winres/icon256.png --out "$ICONSET/icon_128x128@2x.png"
+          sips -z 256 256   winres/icon256.png --out "$ICONSET/icon_256x256.png"
+          sips -z 256 256   winres/icon256.png --out "$ICONSET/icon_256x256@2x.png"
+          sips -z 256 256   winres/icon256.png --out "$ICONSET/icon_512x512.png"
+          sips -z 256 256   winres/icon256.png --out "$ICONSET/icon_512x512@2x.png"
+          iconutil -c icns "$ICONSET" -o AppIcon.icns
+
+      - name: Create app bundle
+        run: |
+          APP="I2P Vanity Generator.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp i2p-vanitygen "$APP/Contents/MacOS/"
+          cp AppIcon.icns "$APP/Contents/Resources/"
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          sed "s/VERSION/$VERSION/g" darwin/Info.plist > "$APP/Contents/Info.plist"
 
       - name: Unlock keychain
         env:
@@ -122,24 +148,28 @@ jobs:
           security set-keychain-settings -t 3600 ~/Library/Keychains/login.keychain-db
           security find-identity -v -p codesigning
 
-      - name: Sign binary
+      - name: Sign app bundle
         run: |
           IDENTITY_HASH=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
           echo "Using identity: $IDENTITY_HASH"
-          codesign --force --options runtime --timestamp \
+          codesign --force --deep --options runtime --timestamp \
             --sign "$IDENTITY_HASH" \
-            "i2p-vanitygen-darwin-arm64"
+            "I2P Vanity Generator.app"
           echo "Verifying signature..."
-          codesign -dv --verbose=2 "i2p-vanitygen-darwin-arm64"
+          codesign -dv --verbose=2 "I2P Vanity Generator.app"
 
       - name: Create DMG
         run: |
-          mkdir -p dmg-staging
-          cp i2p-vanitygen-darwin-arm64 dmg-staging/
-          hdiutil create -volname "I2P Vanity Generator" \
-            -srcfolder dmg-staging \
-            -ov -format UDZO \
-            "i2p-vanitygen-darwin-arm64.dmg"
+          brew install create-dmg || true
+          create-dmg \
+            --volname "I2P Vanity Generator" \
+            --window-pos 200 120 \
+            --window-size 540 380 \
+            --icon-size 80 \
+            --icon "I2P Vanity Generator.app" 130 175 \
+            --app-drop-link 410 175 \
+            "i2p-vanitygen-darwin-arm64.dmg" \
+            "I2P Vanity Generator.app"
 
       - name: Notarize DMG
         run: |
@@ -150,13 +180,11 @@ jobs:
       - name: Staple notarization ticket
         run: xcrun stapler staple "i2p-vanitygen-darwin-arm64.dmg"
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: i2p-vanitygen-darwin-arm64
-          path: |
-            i2p-vanitygen-darwin-arm64
-            i2p-vanitygen-darwin-arm64.dmg
+          path: i2p-vanitygen-darwin-arm64.dmg
 
   sign-linux:
     needs: build-linux

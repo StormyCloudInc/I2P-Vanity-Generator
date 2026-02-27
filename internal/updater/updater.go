@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -185,6 +186,8 @@ func Download(ctx context.Context, r *Release, progress chan<- DownloadProgress)
 
 // Apply performs self-replacement by renaming the current binary to .old
 // and moving the downloaded file into its place.
+// On macOS the downloaded file is a .dmg; Apply mounts it, extracts the
+// binary from the embedded .app bundle, then unmounts.
 func Apply(downloadedPath string) error {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -195,16 +198,78 @@ func Apply(downloadedPath string) error {
 		return err
 	}
 
+	newBinaryPath := downloadedPath
+	var mountPoint string
+
+	if runtime.GOOS == "darwin" {
+		// Mount the DMG silently
+		out, err := exec.Command("hdiutil", "attach", "-nobrowse", "-readonly", "-mountrandom", os.TempDir(), downloadedPath).Output()
+		if err != nil {
+			return fmt.Errorf("mounting dmg: %w", err)
+		}
+
+		// Parse mount point from hdiutil output (last column of last line)
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) == 0 {
+			return fmt.Errorf("no mount point in hdiutil output")
+		}
+		fields := strings.SplitN(lines[len(lines)-1], "\t", 3)
+		if len(fields) < 3 {
+			return fmt.Errorf("unexpected hdiutil output: %s", lines[len(lines)-1])
+		}
+		mountPoint = strings.TrimSpace(fields[2])
+
+		// Find the binary inside the .app bundle
+		pattern := filepath.Join(mountPoint, "*.app", "Contents", "MacOS", "*")
+		matches, _ := filepath.Glob(pattern)
+		if len(matches) == 0 {
+			exec.Command("hdiutil", "detach", mountPoint, "-quiet").Run()
+			return fmt.Errorf("no binary found in dmg at %s", pattern)
+		}
+
+		// Copy to a temp file (can't rename across filesystems)
+		tmpBin, err := os.CreateTemp(filepath.Dir(exePath), "i2p-vanitygen-update-*.tmp")
+		if err != nil {
+			exec.Command("hdiutil", "detach", mountPoint, "-quiet").Run()
+			return fmt.Errorf("creating temp file: %w", err)
+		}
+		src, err := os.Open(matches[0])
+		if err != nil {
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			exec.Command("hdiutil", "detach", mountPoint, "-quiet").Run()
+			return err
+		}
+		if _, err := io.Copy(tmpBin, src); err != nil {
+			src.Close()
+			tmpBin.Close()
+			os.Remove(tmpBin.Name())
+			exec.Command("hdiutil", "detach", mountPoint, "-quiet").Run()
+			return err
+		}
+		src.Close()
+		tmpBin.Close()
+		os.Chmod(tmpBin.Name(), 0755)
+
+		// Unmount and clean up DMG
+		exec.Command("hdiutil", "detach", mountPoint, "-quiet").Run()
+		os.Remove(downloadedPath)
+
+		newBinaryPath = tmpBin.Name()
+	}
+
 	oldPath := exePath + ".old"
 	os.Remove(oldPath) // remove leftover from previous update
 
 	if err := os.Rename(exePath, oldPath); err != nil {
+		os.Remove(newBinaryPath)
 		return fmt.Errorf("renaming current binary: %w", err)
 	}
 
-	if err := os.Rename(downloadedPath, exePath); err != nil {
+	if err := os.Rename(newBinaryPath, exePath); err != nil {
 		// Try to roll back
 		os.Rename(oldPath, exePath)
+		os.Remove(newBinaryPath)
 		return fmt.Errorf("moving new binary into place: %w", err)
 	}
 
@@ -291,9 +356,12 @@ func parseVersion(v string) []int {
 
 // assetName returns the expected release asset filename for the current platform.
 func assetName() string {
-	ext := ""
-	if runtime.GOOS == "windows" {
-		ext = ".exe"
+	switch runtime.GOOS {
+	case "windows":
+		return fmt.Sprintf("i2p-vanitygen-%s-%s.exe", runtime.GOOS, runtime.GOARCH)
+	case "darwin":
+		return fmt.Sprintf("i2p-vanitygen-%s-%s.dmg", runtime.GOOS, runtime.GOARCH)
+	default:
+		return fmt.Sprintf("i2p-vanitygen-%s-%s", runtime.GOOS, runtime.GOARCH)
 	}
-	return fmt.Sprintf("i2p-vanitygen-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
 }
