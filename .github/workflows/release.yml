@@ -30,14 +30,14 @@ jobs:
           CGO_ENABLED: 1
         run: |
           LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}"
-          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-linux-amd64" .
+          go build -ldflags "${LDFLAGS}" -o "vanitygenerator_linux_signed" .
         shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-linux-amd64
-          path: i2p-vanitygen-linux-amd64
+          name: vanitygenerator-linux
+          path: vanitygenerator_linux_signed
 
   build-windows:
     runs-on: [self-hosted, Windows, X64]
@@ -83,20 +83,20 @@ jobs:
           set GOARCH=amd64
           set CGO_ENABLED=1
           set CC=gcc
-          go build -ldflags "-H=windowsgui -s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}" -o "i2p-vanitygen-windows-amd64.exe" .
+          go build -ldflags "-H=windowsgui -s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}" -o "vanitygenerator_windows_signed.exe" .
         shell: cmd
 
       - name: Sign Windows binary
         env:
           CERTUM_CERTIFICATE_SHA1: ${{ secrets.CERTUM_CERTIFICATE_SHA1 }}
-        run: powershell -ExecutionPolicy Bypass -File ".github/scripts/sign-exe.ps1" -BinaryPath "i2p-vanitygen-windows-amd64.exe"
+        run: powershell -ExecutionPolicy Bypass -File ".github/scripts/sign-exe.ps1" -BinaryPath "vanitygenerator_windows_signed.exe"
         shell: cmd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-windows-amd64
-          path: i2p-vanitygen-windows-amd64.exe
+          name: vanitygenerator-windows
+          path: vanitygenerator_windows_signed.exe
 
   build-macos:
     runs-on: [self-hosted, macOS]
@@ -112,7 +112,7 @@ jobs:
           CC: clang
         run: |
           LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=${{ github.ref_name }}"
-          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen" .
+          go build -ldflags "${LDFLAGS}" -o "vanitygenerator" .
 
       - name: Create app icon
         run: |
@@ -132,9 +132,9 @@ jobs:
 
       - name: Create app bundle
         run: |
-          APP="I2P Vanity Generator.app"
+          APP="Vanity Domain Generator.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp i2p-vanitygen "$APP/Contents/MacOS/"
+          cp vanitygenerator "$APP/Contents/MacOS/"
           cp AppIcon.icns "$APP/Contents/Resources/"
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
@@ -154,37 +154,37 @@ jobs:
           echo "Using identity: $IDENTITY_HASH"
           codesign --force --deep --options runtime --timestamp \
             --sign "$IDENTITY_HASH" \
-            "I2P Vanity Generator.app"
+            "Vanity Domain Generator.app"
           echo "Verifying signature..."
-          codesign -dv --verbose=2 "I2P Vanity Generator.app"
+          codesign -dv --verbose=2 "Vanity Domain Generator.app"
 
       - name: Create DMG
         run: |
           brew install create-dmg || true
           create-dmg \
-            --volname "I2P Vanity Generator" \
+            --volname "Vanity Domain Generator" \
             --window-pos 200 120 \
             --window-size 540 380 \
             --icon-size 80 \
-            --icon "I2P Vanity Generator.app" 130 175 \
+            --icon "Vanity Domain Generator.app" 130 175 \
             --app-drop-link 410 175 \
-            "i2p-vanitygen-darwin-arm64.dmg" \
-            "I2P Vanity Generator.app"
+            "vanitygenerator_mac_silicon_signed.dmg" \
+            "Vanity Domain Generator.app"
 
       - name: Notarize DMG
         run: |
-          xcrun notarytool submit "i2p-vanitygen-darwin-arm64.dmg" \
+          xcrun notarytool submit "vanitygenerator_mac_silicon_signed.dmg" \
             --keychain-profile "i2p-notary" --wait
           echo "Notarization complete"
 
       - name: Staple notarization ticket
-        run: xcrun stapler staple "i2p-vanitygen-darwin-arm64.dmg"
+        run: xcrun stapler staple "vanitygenerator_mac_silicon_signed.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-darwin-arm64
-          path: i2p-vanitygen-darwin-arm64.dmg
+          name: vanitygenerator-macos
+          path: vanitygenerator_mac_silicon_signed.dmg
 
   sign-linux:
     needs: build-linux
@@ -196,21 +196,21 @@ jobs:
       - name: Download Linux binary
         uses: actions/download-artifact@v4
         with:
-          name: i2p-vanitygen-linux-amd64
+          name: vanitygenerator-linux
 
       - name: Sign Linux binary (detached PKCS#7)
         env:
           CERTUM_CERTIFICATE_SHA1: ${{ secrets.CERTUM_CERTIFICATE_SHA1 }}
-        run: powershell -ExecutionPolicy Bypass -File ".github/scripts/sign-detached.ps1" -FilePath "i2p-vanitygen-linux-amd64"
+        run: powershell -ExecutionPolicy Bypass -File ".github/scripts/sign-detached.ps1" -FilePath "vanitygenerator_linux_signed"
         shell: cmd
 
       - name: Upload signed artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-linux-amd64-signed
+          name: vanitygenerator-linux-signed
           path: |
-            i2p-vanitygen-linux-amd64
-            i2p-vanitygen-linux-amd64.p7s
+            vanitygenerator_linux_signed
+            vanitygenerator_linux_signed.p7s
 
   release:
     needs: [build-windows, build-macos, sign-linux]
@@ -236,9 +236,9 @@ jobs:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           request_rate: 4
           files: |
-            artifacts/i2p-vanitygen-windows-amd64.exe
-            artifacts/i2p-vanitygen-linux-amd64
-            artifacts/i2p-vanitygen-darwin-arm64.dmg
+            artifacts/vanitygenerator_windows_signed.exe
+            artifacts/vanitygenerator_linux_signed
+            artifacts/vanitygenerator_mac_silicon_signed.dmg
 
       - name: Parse VirusTotal results
         id: vt_links
@@ -262,7 +262,7 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
-            ## Vanity Address Generator ${{ github.ref_name }}
+            ## Vanity Domain Generator ${{ github.ref_name }}
 
             Generate vanity I2P (.b32.i2p) and Tor v3 (.onion) addresses with a custom prefix. GPU accelerated on macOS (Metal) and Windows/Linux (OpenCL).
 
@@ -270,9 +270,9 @@ jobs:
 
             | Platform | Architecture | File | Signed |
             |----------|-------------|------|--------|
-            | Windows | amd64 | `i2p-vanitygen-windows-amd64.exe` | Authenticode |
-            | macOS | arm64 (Apple Silicon) | `i2p-vanitygen-darwin-arm64.dmg` | Notarized + Stapled |
-            | Linux | amd64 | `i2p-vanitygen-linux-amd64` | PKCS#7 (`.p7s`) |
+            | Windows | amd64 | `vanitygenerator_windows_signed.exe` | Authenticode |
+            | macOS | arm64 (Apple Silicon) | `vanitygenerator_mac_silicon_signed.dmg` | Notarized + Stapled |
+            | Linux | amd64 | `vanitygenerator_linux_signed` | PKCS#7 (`.p7s`) |
 
             ### VirusTotal Analysis
 
@@ -284,12 +284,12 @@ jobs:
 
             **macOS** — notarized and stapled:
             ```
-            spctl -a -t open --context context:primary-signature i2p-vanitygen-darwin-arm64.dmg
+            spctl -a -t open --context context:primary-signature vanitygenerator_mac_silicon_signed.dmg
             ```
 
             **Linux** — verify the detached PKCS#7 signature:
             ```
-            openssl cms -verify -in i2p-vanitygen-linux-amd64.p7s -content i2p-vanitygen-linux-amd64 -inform DER -noverify
+            openssl cms -verify -in vanitygenerator_linux_signed.p7s -content vanitygenerator_linux_signed -inform DER -noverify
             ```
 
             **Checksums:**

@@ -21,16 +21,16 @@ jobs:
           go version
           echo "Building with Metal GPU support..."
           LDFLAGS="-s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=gpu-test"
-          go build -ldflags "${LDFLAGS}" -o "i2p-vanitygen-darwin-arm64" .
+          go build -ldflags "${LDFLAGS}" -o "vanitygenerator" .
           echo "Build successful!"
-          ls -la i2p-vanitygen-darwin-arm64
-          file i2p-vanitygen-darwin-arm64
+          ls -la vanitygenerator
+          file vanitygenerator
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-darwin-arm64-gpu-test
-          path: i2p-vanitygen-darwin-arm64
+          name: vanitygenerator-macos-gpu-test
+          path: vanitygenerator
 
   build-windows-gpu:
     runs-on: [self-hosted, Windows, X64]
@@ -56,13 +56,13 @@ jobs:
           set GOARCH=amd64
           set CGO_ENABLED=1
           set CC=gcc
-          go build -ldflags "-H=windowsgui -s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=gpu-test" -o "i2p-vanitygen-windows-amd64.exe" .
+          go build -ldflags "-H=windowsgui -s -w -X github.com/go-i2p/i2p-vanitygen/internal/version.Version=gpu-test" -o "vanitygenerator.exe" .
           echo Build successful!
-          dir i2p-vanitygen-windows-amd64.exe
+          dir vanitygenerator.exe
         shell: cmd
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: i2p-vanitygen-windows-amd64-gpu-test
-          path: i2p-vanitygen-windows-amd64.exe
+          name: vanitygenerator-windows-gpu-test
+          path: vanitygenerator.exe

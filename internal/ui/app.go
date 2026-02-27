@@ -125,7 +125,7 @@ func Run(w *app.Window) error {
 	// Set the window icon (Windows title bar)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		setWindowIcon("I2P Vanity Address Generator")
+		setWindowIcon("Vanity Domain Generator")
 	}()
 
 	// Background update check
@@ -321,7 +321,7 @@ func Run(w *app.Window) error {
 					break
 				}
 				if e.Kind == gesture.KindClick {
-					openURL("https://github.com/go-i2p/i2p-vanitygen")
+					openURL("https://github.com/go-i2p/i2p-vanitygen/releases/tag/" + version.Version)
 				}
 			}
 			for {
@@ -413,36 +413,27 @@ func layoutHeader(gtx layout.Context, th *material.Theme, projectLink, donateLin
 		// Title
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H4(th, "Vanity Address Generator")
+				lbl := material.H5(th, "Vanity Domain Generator")
 				lbl.Color = colorText
 				lbl.Font.Weight = font.Bold
 				lbl.Alignment = text.Middle
 				return lbl.Layout(gtx)
 			})
 		}),
-		// Project URL (clickable)
-		layout.Rigid(vspace(4)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, "github.com/go-i2p/i2p-vanitygen")
-				lbl.Color = colorAccent
-				dims := lbl.Layout(gtx)
-				area := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
-				pointer.CursorPointer.Add(gtx.Ops)
-				projectLink.Add(gtx.Ops)
-				area.Pop()
-				return dims
-			})
-		}),
-		// Version + donate row
+		// Version (clickable) + donate row
 		layout.Rigid(vspace(4)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, version.Version)
-						lbl.Color = colorMuted
-						return lbl.Layout(gtx)
+						lbl.Color = colorAccent
+						dims := lbl.Layout(gtx)
+						area := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+						pointer.CursorPointer.Add(gtx.Ops)
+						projectLink.Add(gtx.Ops)
+						area.Pop()
+						return dims
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "  ·  ")

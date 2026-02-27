@@ -14,7 +14,7 @@ func main() {
 
 	go func() {
 		w := new(app.Window)
-		w.Option(app.Title("Vanity Address Generator"))
+		w.Option(app.Title("Vanity Domain Generator"))
 		w.Option(app.Size(520, 820))
 		if err := ui.Run(w); err != nil {
 			os.Exit(1)

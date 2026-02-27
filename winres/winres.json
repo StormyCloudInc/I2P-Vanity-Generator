@@ -15,10 +15,10 @@
     "#1": {
       "0409": {
         "identity": {
-          "name": "StormyCloudInc.I2PVanitygen",
+          "name": "StormyCloudInc.VanityDomainGenerator",
           "version": "0.0.0.0"
         },
-        "description": "I2P Vanity Address Generator",
+        "description": "Vanity Domain Generator",
         "minimum-os": "win7",
         "execution-level": "as invoker",
         "ui-access": false,
@@ -46,9 +46,9 @@
         "info": {
           "0409": {
             "CompanyName": "StormyCloud Inc",
-            "FileDescription": "I2P Vanity Address Generator",
-            "ProductName": "I2P Vanitygen",
-            "OriginalFilename": "i2p-vanitygen.exe"
+            "FileDescription": "Vanity Domain Generator",
+            "ProductName": "Vanity Domain Generator",
+            "OriginalFilename": "vanitygenerator_windows_signed.exe"
           }
         }
       }

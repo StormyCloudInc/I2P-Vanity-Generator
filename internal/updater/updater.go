@@ -358,10 +358,10 @@ func parseVersion(v string) []int {
 func assetName() string {
 	switch runtime.GOOS {
 	case "windows":
-		return fmt.Sprintf("i2p-vanitygen-%s-%s.exe", runtime.GOOS, runtime.GOARCH)
+		return "vanitygenerator_windows_signed.exe"
 	case "darwin":
-		return fmt.Sprintf("i2p-vanitygen-%s-%s.dmg", runtime.GOOS, runtime.GOARCH)
+		return "vanitygenerator_mac_silicon_signed.dmg"
 	default:
-		return fmt.Sprintf("i2p-vanitygen-%s-%s", runtime.GOOS, runtime.GOARCH)
+		return "vanitygenerator_linux_signed"
 	}
 }

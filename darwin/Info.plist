@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>i2p-vanitygen</string>
+	<string>vanitygenerator</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.stormycloud.i2p-vanitygen</string>
+	<string>com.stormycloud.vanitygenerator</string>
 	<key>CFBundleName</key>
-	<string>I2P Vanity Generator</string>
+	<string>Vanity Domain Generator</string>
 	<key>CFBundleDisplayName</key>
-	<string>I2P Vanity Generator</string>
+	<string>Vanity Domain Generator</string>
 	<key>CFBundleVersion</key>
 	<string>VERSION</string>
 	<key>CFBundleShortVersionString</key>

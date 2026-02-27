@@ -1,13 +1,13 @@
-# Vanity Address Generator
+# Vanity Domain Generator
 
 A cross-platform desktop application for generating vanity I2P (`.b32.i2p`) and Tor v3 (`.onion`) addresses with custom prefixes. GPU accelerated.
 
-Instead of accepting a randomly generated address, search for one that starts with a meaningful prefix like `hello`, `stormy`, or `secure`.
+Instead of accepting a randomly generated address, search for one that starts with a meaningful prefix like `hello`, `stormy`, or `yourhandle`.
 
 <p align="center">
-  <img src=".github/images/screenshot-idle.png" alt="Vanity Address Generator - Idle" width="380">
+  <img src=".github/images/screenshot-idle.png" alt="Vanity Domain Generator - Idle" width="380">
   &nbsp;&nbsp;
-  <img src=".github/images/screenshot-result.png" alt="Vanity Address Generator - Result" width="380">
+  <img src=".github/images/screenshot-result.png" alt="Vanity Domain Generator - Result" width="380">
 </p>
 
 ## Features
@@ -26,9 +26,9 @@ Grab the latest release for your platform from [Releases](https://github.com/Sto
 
 | Platform | Architecture | File |
 |----------|-------------|------|
-| Windows | x86_64 | `i2p-vanitygen-windows-amd64.exe` |
-| macOS | Apple Silicon | `i2p-vanitygen-darwin-arm64.dmg` |
-| Linux | x86_64 | `i2p-vanitygen-linux-amd64` |
+| Windows | x86_64 | `vanitygenerator_windows_signed.exe` |
+| macOS | Apple Silicon | `vanitygenerator_mac_silicon_signed.dmg` |
+| Linux | x86_64 | `vanitygenerator_linux_signed` |
 
 All binaries are code signed:
 - **Windows** — Authenticode (right-click → Properties → Digital Signatures)
@@ -80,7 +80,7 @@ git clone https://github.com/StormyCloudInc/i2p-vanitygen.git
 cd i2p-vanitygen
 
 # Build (dev version)
-go build -o i2p-vanitygen .
+go build -o vanitygenerator .
 ```
 
 ### Platform-specific builds
@@ -90,7 +90,7 @@ go build -o i2p-vanitygen .
 go install github.com/tc-hib/go-winres@latest
 go-winres make
 GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
-  go build -ldflags "-H=windowsgui -s -w" -o i2p-vanitygen.exe .
+  go build -ldflags "-H=windowsgui -s -w" -o vanitygenerator.exe .
 ```
 
 **Linux** (requires Gio + OpenCL dependencies):
@@ -101,13 +101,13 @@ sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev \
   ocl-icd-opencl-dev
 
 GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
-  go build -ldflags "-s -w" -o i2p-vanitygen .
+  go build -ldflags "-s -w" -o vanitygenerator .
 ```
 
 **macOS:**
 ```bash
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 \
-  go build -ldflags "-s -w" -o i2p-vanitygen .
+  go build -ldflags "-s -w" -o vanitygenerator .
 ```
 
 ## How It Works
