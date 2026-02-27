@@ -24,6 +24,9 @@ var (
 	colorBadgeBg    = color.NRGBA{R: 0x2a, G: 0x2a, B: 0x2a, A: 0xff} // #2a2a2a
 	colorDisabled   = color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xff} // #333333
 
+	// StormyCloud brand color (from logo gradient)
+	colorStormyBlue = color.NRGBA{R: 0x3c, G: 0xed, B: 0xfc, A: 0xff} // #3cedfc
+
 	// I2P logo dot colors (from SVG)
 	colorLogoGreen  = color.NRGBA{R: 0x60, G: 0xab, B: 0x60, A: 0xff} // #60ab60
 	colorLogoYellow = color.NRGBA{R: 0xff, G: 0xc4, B: 0x34, A: 0xff} // #ffc434

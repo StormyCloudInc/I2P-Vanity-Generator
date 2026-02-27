@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/font"
+	"gioui.org/gesture"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -86,6 +89,9 @@ func Run(w *app.Window) error {
 		updateInstallBtn widget.Clickable
 		updateCancelBtn  widget.Clickable
 		scrollList       widget.List
+		projectLink      gesture.Click
+		donateLink       gesture.Click
+		stormyLink       gesture.Click
 	)
 	scrollList.Axis = layout.Vertical
 	prefixEditor.SingleLine = true
@@ -308,7 +314,36 @@ func Run(w *app.Window) error {
 				s.updateEstimate()
 			}
 
-			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &netI2PBtn, &netTorBtn, &updateBannerBtn, &updateDismissBtn, &scrollList)
+			// Handle link clicks
+			for {
+				e, ok := projectLink.Update(gtx.Source)
+				if !ok {
+					break
+				}
+				if e.Kind == gesture.KindClick {
+					openURL("https://github.com/go-i2p/i2p-vanitygen")
+				}
+			}
+			for {
+				e, ok := donateLink.Update(gtx.Source)
+				if !ok {
+					break
+				}
+				if e.Kind == gesture.KindClick {
+					openURL("https://stormycloud.org/donate")
+				}
+			}
+			for {
+				e, ok := stormyLink.Update(gtx.Source)
+				if !ok {
+					break
+				}
+				if e.Kind == gesture.KindClick {
+					openURL("https://stormycloud.org")
+				}
+			}
+
+			layoutApp(gtx, th, s, &prefixEditor, &startBtn, &saveBtn, &coreSlider, maxCores, &gpuToggle, &netI2PBtn, &netTorBtn, &updateBannerBtn, &updateDismissBtn, &scrollList, &projectLink, &donateLink, &stormyLink)
 
 			// Draw update overlay on top
 			s.mu.Lock()
@@ -330,7 +365,7 @@ func Run(w *app.Window) error {
 	}
 }
 
-func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable, updateBannerBtn, updateDismissBtn *widget.Clickable, scrollList *widget.List) layout.Dimensions {
+func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn, saveBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable, updateBannerBtn, updateDismissBtn *widget.Clickable, scrollList *widget.List, projectLink, donateLink, stormyLink *gesture.Click) layout.Dimensions {
 	// Fill window width with side padding
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(20), Right: unit.Dp(20)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -344,7 +379,7 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 			return list.Layout(gtx, numSections, func(gtx layout.Context, index int) layout.Dimensions {
 				switch index {
 				case 0: // Header
-					return layoutHeader(gtx, th)
+					return layoutHeader(gtx, th, projectLink, donateLink, stormyLink)
 				case 1: // Spacer after header
 					return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
 				case 2: // Update banner (conditional)
@@ -373,7 +408,7 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 	})
 }
 
-func layoutHeader(gtx layout.Context, th *material.Theme) layout.Dimensions {
+func layoutHeader(gtx layout.Context, th *material.Theme, projectLink, donateLink, stormyLink *gesture.Click) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 		// I2P logo: "I2P" text + colored dot grid
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -406,13 +441,70 @@ func layoutHeader(gtx layout.Context, th *material.Theme) layout.Dimensions {
 				return lbl.Layout(gtx)
 			})
 		}),
-		// Version label
+		// Project URL (clickable)
 		layout.Rigid(vspace(4)),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, version.Version)
-				lbl.Color = colorMuted
-				return lbl.Layout(gtx)
+				lbl := material.Caption(th, "github.com/go-i2p/i2p-vanitygen")
+				lbl.Color = colorAccent
+				dims := lbl.Layout(gtx)
+				area := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+				pointer.CursorPointer.Add(gtx.Ops)
+				projectLink.Add(gtx.Ops)
+				area.Pop()
+				return dims
+			})
+		}),
+		// Version + donate row
+		layout.Rigid(vspace(4)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, version.Version)
+						lbl.Color = colorMuted
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "  ·  ")
+						lbl.Color = colorMuted
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "Donate")
+						lbl.Color = colorAccent
+						dims := lbl.Layout(gtx)
+						area := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+						pointer.CursorPointer.Add(gtx.Ops)
+						donateLink.Add(gtx.Ops)
+						area.Pop()
+						return dims
+					}),
+				)
+			})
+		}),
+		// Powered by StormyCloud
+		layout.Rigid(vspace(6)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "Powered by ")
+						lbl.Color = colorMuted
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "StormyCloud")
+						lbl.Color = colorStormyBlue
+						lbl.Font.Weight = font.SemiBold
+						dims := lbl.Layout(gtx)
+						area := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+						pointer.CursorPointer.Add(gtx.Ops)
+						stormyLink.Add(gtx.Ops)
+						area.Pop()
+						return dims
+					}),
+				)
 			})
 		}),
 	)
@@ -1219,6 +1311,19 @@ func formatUint(n uint64) string {
 		return fmt.Sprintf("%.1fK", float64(n)/1_000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func openURL(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	cmd.Start()
 }
 
 func formatDuration(d time.Duration) string {
