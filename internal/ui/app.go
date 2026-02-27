@@ -410,33 +410,12 @@ func layoutApp(gtx layout.Context, th *material.Theme, s *state, prefixEditor *w
 
 func layoutHeader(gtx layout.Context, th *material.Theme, projectLink, donateLink, stormyLink *gesture.Click) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-		// I2P logo: "I2P" text + colored dot grid
+		// Title
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					// "I2P" text
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.H2(th, "I2P")
-						lbl.Color = colorText
-						lbl.Font.Weight = font.Bold
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Spacer{Width: unit.Dp(12)}.Layout(gtx)
-					}),
-					// Dot grid (4x2 colored circles from SVG)
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutLogoDots(gtx, unit.Dp(22), unit.Dp(6))
-					}),
-				)
-			})
-		}),
-		layout.Rigid(vspace(6)),
-		// Subtitle
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.H6(th, "Vanity Address Generator")
+				lbl := material.H4(th, "Vanity Address Generator")
 				lbl.Color = colorText
+				lbl.Font.Weight = font.Bold
 				lbl.Alignment = text.Middle
 				return lbl.Layout(gtx)
 			})
@@ -700,33 +679,6 @@ func layoutProgressBar(gtx layout.Context, progress float64) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(width, barHeight)}
 }
 
-// layoutLogoDots draws the 4x2 colored dot grid from the I2P logo SVG.
-func layoutLogoDots(gtx layout.Context, dotSize, gap unit.Dp) layout.Dimensions {
-	colors := [2][4]color.NRGBA{
-		{colorLogoGreen, colorLogoYellow, colorLogoGreen, colorLogoRed},
-		{colorLogoYellow, colorLogoRed, colorLogoYellow, colorLogoGreen},
-	}
-
-	ds := gtx.Dp(dotSize)
-	g := gtx.Dp(gap)
-	r := ds / 2
-
-	for row := 0; row < 2; row++ {
-		for col := 0; col < 4; col++ {
-			x := col * (ds + g)
-			y := row * (ds + g)
-			rrect := clip.RRect{
-				Rect: image.Rect(x, y, x+ds, y+ds),
-				NE:   r, NW: r, SE: r, SW: r,
-			}
-			paint.FillShape(gtx.Ops, colors[row][col], rrect.Op(gtx.Ops))
-		}
-	}
-
-	totalW := 4*ds + 3*g
-	totalH := 2*ds + 1*g
-	return layout.Dimensions{Size: image.Pt(totalW, totalH)}
-}
 
 func layoutInputCard(gtx layout.Context, th *material.Theme, s *state, prefixEditor *widget.Editor, startBtn *widget.Clickable, coreSlider *widget.Float, maxCores int, gpuToggle *widget.Bool, netI2PBtn, netTorBtn *widget.Clickable) layout.Dimensions {
 	return cardWithBorder(gtx, func(gtx layout.Context) layout.Dimensions {

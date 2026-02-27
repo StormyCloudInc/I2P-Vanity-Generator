@@ -27,11 +27,6 @@ var (
 	// StormyCloud brand color (from logo gradient)
 	colorStormyBlue = color.NRGBA{R: 0x3c, G: 0xed, B: 0xfc, A: 0xff} // #3cedfc
 
-	// I2P logo dot colors (from SVG)
-	colorLogoGreen  = color.NRGBA{R: 0x60, G: 0xab, B: 0x60, A: 0xff} // #60ab60
-	colorLogoYellow = color.NRGBA{R: 0xff, G: 0xc4, B: 0x34, A: 0xff} // #ffc434
-	colorLogoRed    = color.NRGBA{R: 0xe1, G: 0x56, B: 0x47, A: 0xff} // #e15647
-
 	// Modal overlay scrim
 	colorOverlay = color.NRGBA{A: 0xCC} // semi-transparent black
 
