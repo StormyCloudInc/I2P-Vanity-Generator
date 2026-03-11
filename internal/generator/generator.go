@@ -192,10 +192,13 @@ func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, 
 		return // GPU not supported for this scheme
 	}
 
+	// Save the original template — the GPU kernel uses this for all batches.
+	origRaw := i2pCand.Dest.Raw
+
 	batchSize := uint64(1 << 22) // ~4M hashes per dispatch
 	gpuW, err := gpu.NewWorker(gpu.WorkerConfig{
 		DeviceIndex:  g.gpuDevice,
-		DestTemplate: i2pCand.Raw(),
+		DestTemplate: origRaw,
 		Prefix:       g.shortestPrefix(),
 		BatchSize:    batchSize,
 	})
@@ -222,24 +225,22 @@ func (g *Generator) gpuWorker(ctx context.Context, totalChecked *atomic.Uint64, 
 		counter += result.Checked
 
 		if result.Found {
-			// GPU matched shortest prefix; verify against all prefixes on CPU
+			// Restore original template before mutating for verification,
+			// keeping it aligned with the GPU kernel's baked-in DestTemplate.
+			i2pCand.Dest.Raw = origRaw
 			i2pCand.Dest.MutateEncryptionKey(result.MatchCounter)
 			addr := i2pCand.FullAddress()
 			if !g.matchesAny(addr) {
 				continue // false positive from shorter GPU prefix
 			}
+			// Clone so continued mutations don't corrupt the sent result
+			snapshot := i2pCand.Clone()
 			sendResult(ctx, resultCh, Result{
-				Candidate: i2pCand,
+				Candidate: snapshot,
 				Address:   addr,
 				Attempts:  totalChecked.Load(),
 				Duration:  time.Since(startTime),
 			})
-			// Generate a fresh candidate for next matches (the current one was mutated)
-			newCand, err := g.scheme.NewCandidate()
-			if err != nil {
-				return
-			}
-			i2pCand = newCand.(*address.I2PCandidate)
 		}
 	}
 }

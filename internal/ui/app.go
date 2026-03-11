@@ -315,7 +315,9 @@ func Run(w *app.Window) error {
 				if savePromptSave.Clicked(gtx) {
 					s.save()
 					s.showSavePrompt = false
-					s.executeSavePromptAction()
+					if s.saved {
+						s.executeSavePromptAction()
+					}
 				}
 				if savePromptDiscard.Clicked(gtx) {
 					s.showSavePrompt = false
@@ -1334,6 +1336,7 @@ func (s *state) start(w *app.Window) {
 			s.results = append(s.results, result)
 			s.lastResult = &s.results[len(s.results)-1]
 			s.result = result.Address
+			s.saved = false
 			count := len(s.results)
 			endless := s.endless
 			hitLimit := endless && count >= maxResults
@@ -1417,6 +1420,8 @@ func (s *state) save() {
 	s.mu.Lock()
 	if lastErr != "" && saved == 0 {
 		s.status = "Save error: " + lastErr
+	} else if lastErr != "" {
+		s.status = fmt.Sprintf("%d of %d keys saved to %s (some failed)", saved, len(results), exeDir)
 	} else if saved == 1 {
 		s.status = "Keys saved to " + exeDir
 		s.saved = true
